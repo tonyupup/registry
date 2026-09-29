@@ -1,0 +1,34 @@
+# CI 交叉编译镜像：armhf/armel 工具链 + patchelf 预装好，Drone pipeline 直接拉这个镜像用，
+# 不在每次构建时现场 apt install（那样每次构建都要重新下载工具链，慢）。
+#
+# bullseye 已经过了 Debian 官方仓库的正常支持窗口，deb.debian.org/security.debian.org
+# 上很多旧包版本已经被清掉了（现场装会大量 404），改用镜像自带的 snapshot.debian.org
+# 固定日期快照源（构建这个镜像时验证过可用，snapshot.debian.org 偶尔限速，装包报
+# Connection timed out 的话重试几次或加大 Acquire::Retries）。
+#
+# 构建: docker build -f Dockerfile.ci-armhf -t docker.cnb.cool/<namespace>/dnake-ci-armhf:<tag> .
+# 推送: docker push docker.cnb.cool/<namespace>/dnake-ci-armhf:<tag>
+FROM debian:bullseye
+
+RUN printf '%s\n' \
+      'deb http://mirrors.tuna.tsinghua.edu.cn/debian bullseye main' \
+      'deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bullseye-security main' \
+      'deb http://mirrors.tuna.tsinghua.edu.cn/debian bullseye-updates main' \
+      > /etc/apt/sources.list && \
+    printf 'Acquire::Retries "8";\nAcquire::http::Timeout "60";\n' > /etc/apt/apt.conf.d/99retry && \
+    apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        crossbuild-essential-armhf \
+        crossbuild-essential-armel \
+        patchelf \
+        make \
+        autoconf \
+        automake \
+        libtool \
+        git \
+        file \
+        ca-certificates \
+    && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build

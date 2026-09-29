@@ -1,0 +1,11 @@
+main:
+  push:
+    - services:
+        - docker
+      stages:
+        # dnake-ci-armhf: dnake 项目 Drone pipeline 用的交叉编译镜像
+        # (armhf/armel 工具链 + patchelf 预装好，见 Dockerfile.dnake-ci-armhf 里的注释)
+        - name: Docker build dnake-ci-armhf
+          script: docker build -f Dockerfile.dnake-ci-armhf -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/dnake-ci-armhf:latest .
+        - name: Docker push dnake-ci-armhf
+          script: docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/dnake-ci-armhf:latest
