@@ -10,25 +10,19 @@
 # 推送: docker push docker.cnb.cool/<namespace>/dnake-ci-armhf:<tag>
 FROM debian:bullseye
 
-RUN printf '%s\n' \
-      'deb http://mirrors.tuna.tsinghua.edu.cn/debian bullseye main' \
-      'deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bullseye-security main' \
-      'deb http://mirrors.tuna.tsinghua.edu.cn/debian bullseye-updates main' \
-      > /etc/apt/sources.list && \
-    printf 'Acquire::Retries "8";\nAcquire::http::Timeout "60";\n' > /etc/apt/apt.conf.d/99retry && \
-    apt-get update -qq && \
+RUN set -eux; \
+    printf '%s\n' \
+      'deb http://mirrors.tuna.tsinghua.edu.cn/debian bullseye main contrib non-free' \
+      'deb http://mirrors.tuna.tsinghua.edu.cn/debian bullseye-updates main contrib non-free' \
+      'deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bullseye-security main contrib non-free' \
+      > /etc/apt/sources.list; \
+    printf 'Acquire::Retries "8";\nAcquire::http::Timeout "60";\n' > /etc/apt/apt.conf.d/99retry; \
+    rm -rf /var/lib/apt/lists/*; \
+    apt-get update; \
     apt-get install -y --no-install-recommends \
         crossbuild-essential-armhf \
         crossbuild-essential-armel \
-        patchelf \
-        make \
-        autoconf \
-        automake \
-        libtool \
-        git \
-        file \
-        ca-certificates \
-    && \
+        patchelf make autoconf automake libtool git file ca-certificates; \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
