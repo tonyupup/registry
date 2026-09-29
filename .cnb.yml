@@ -5,7 +5,17 @@ main:
       stages:
         # dnake-ci-armhf: dnake 项目 Drone pipeline 用的交叉编译镜像
         # (armhf/armel 工具链 + patchelf 预装好，见 Dockerfile.dnake-ci-armhf 里的注释)
-        - name: Docker build dnake-ci-armhf
-          script: docker build -f Dockerfile.dnake-ci-armhf -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/dnake-ci-armhf:latest .
-        - name: Docker push dnake-ci-armhf
-          script: docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/dnake-ci-armhf:latest
+        #
+        # --platform linux/arm64 是必须的：这个镜像最终跑在 Drone 的 k8s 集群里，那个
+        # 集群的节点是 arm64（4 个节点全是 postmarketOS + arm64，见 open-xiaoai-bridge
+        # 项目的 docs/ci-cd-and-networking.md）。不显式指定平台的话 `docker build` 默认
+        # 构建成执行它的宿主机架构，如果 cnb.cool 的 runner 是 amd64，产物在 arm64 节点上
+        # 根本跑不起来。buildx 支持跨架构构建（宿主机不是 arm64 时靠 QEMU 模拟，会慢一些
+        # 但产物是对的）。镜像里装的是交叉编译工具链本身（arm-linux-gnueabihf-gcc 等），
+        # 所以"镜像的宿主架构"（arm64，让它能在 arm64 k8s 节点上跑起来）和"它编译出的
+        # 目标架构"（armhf/armel，dnake 设备的架构）是两回事，不要搞混。
+        # buildx --push 在构建的同时直接推送（跨架构产物没法先 --load 进本地 daemon
+        # 再用普通 docker push，所以这里不分 build/push 两步，跟同名/非同名镜像模板
+        # 给的写法不一样，是特意改的）。
+        - name: Docker build & push dnake-ci-armhf
+          script: docker buildx build --platform linux/arm64 -f Dockerfile.dnake-ci-armhf -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/dnake-ci-armhf:latest --push .
