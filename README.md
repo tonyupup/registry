@@ -1,19 +1,56 @@
 # ci-images
 
-专门存放各项目 CI 用的 Docker 镜像定义，cnb.cool 自己的 `.cnb.yml` pipeline 负责构建 + 推送，
-不依赖本地/其他 CI 环境的网络去拉包（这些镜像本身经常要装一堆交叉编译工具链，本地网络
-环境不稳定时装包非常痛苦，交给 cnb.cool 自己的 runner 构建更可靠）。
+各项目 CI 用的 Docker 镜像定义。GitHub Actions（`.github/workflows/build-images.yml`）
+负责构建 **linux/amd64 + linux/arm64** 多平台镜像并推送到 GHCR：
 
-## 结构约定
+```
+ghcr.io/tonyupup/<image-name>:latest
+```
 
-每个镜像一个 `Dockerfile.<image-name>`，`.cnb.yml` 里对应一组 build/push stage，推送到
-`${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/<image-name>:latest`。
+CI/k8s 里拉取统一走代理前缀（推送仍是 ghcr.io，代理只用于拉取）：
 
-新增镜像：加一个 `Dockerfile.<image-name>`，在 `.cnb.yml` 里照抄一组 build/push stage、
-把文件名和镜像名换掉。
+```
+ghcr.dockerproxy.zltop.cn/tonyupup/<image-name>:latest
+```
+
+## 目录结构
+
+```
+images/
+  <image-name>/
+    Dockerfile      # 必须；构建上下文就是这个目录
+    build.env       # 可选：PLATFORMS=... / BUILD_ARGS=A=1;B=2
+    src/            # 可选：需要项目代码时，以 git submodule 挂在这里
+scripts/new-image.sh
+```
+
+每个镜像一个文件夹，互相隔离；需要项目源码时一律用 submodule 引用，不要拷贝代码进来。
+
+## 新增镜像
+
+```bash
+scripts/new-image.sh my-image                                   # 纯工具链镜像
+scripts/new-image.sh my-image git@github.com:foo/bar.git main   # 带 submodule 源码
+# 编辑 images/my-image/Dockerfile，提交推送即可
+```
+
+## 触发规则
+
+| 事件 | 行为 |
+|------|------|
+| push 到 `main` | 只构建改动过的 `images/<name>/`（含 submodule 指针更新），推送 `latest` + `sha-xxxxxxx` |
+| 改了 workflow 或 `.gitmodules` | 全量构建 |
+| Pull Request | 只构建不推送 |
+| 打 tag `<name>/v1.2.3` | 构建该镜像，额外推送 `1.2.3` |
+| Actions 页面手动运行 | 可填镜像名，留空构建全部 |
+
+更新 submodule 后重新构建：`git submodule update --remote images/<name>/src && git commit -am "bump" && git push`。
+
+> 首次推送后，GHCR 包默认是 private；需要匿名拉取的话到 GitHub → Packages → 包设置里改成 public。
+> 私有包在 k8s/Drone 里拉取需要配置 `ghcr.io` 的 imagePullSecret（PAT 带 `read:packages`）。
 
 ## 镜像列表
 
-| 镜像 | 用途 | Dockerfile |
-|------|------|-----------|
-| `dnake-ci-armhf` | dnake 项目 Drone pipeline 交叉编译用：armhf/armel 工具链 + patchelf 预装好，不用每次构建现场 apt install | `Dockerfile.dnake-ci-armhf` |
+| 镜像 | 用途 |
+|------|------|
+| `dnake-ci-armhf` | dnake 项目 Drone pipeline 交叉编译用：armhf/armel 工具链 + patchelf 预装好 |

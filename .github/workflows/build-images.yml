@@ -1,0 +1,165 @@
+# 构建 images/<name>/ 下的每个镜像（多平台 amd64 + arm64），推送到 ghcr.io/<owner>/<name>。
+#
+# - push 到 main：只构建有改动的镜像目录（含 submodule 指针变更）；改了本 workflow 则全量构建
+# - pull_request：只构建不推送，验证 Dockerfile 能过
+# - workflow_dispatch：手动触发，可指定镜像名（空 = 全部）
+# - 打 tag `<name>/v1.2.3`：构建该镜像并额外推送 `1.2.3` 版本 tag
+#
+# 每个镜像目录可放一个可选的 build.env（KEY=VALUE），目前支持：
+#   PLATFORMS=linux/amd64,linux/arm64   覆盖默认平台
+#   BUILD_ARGS=A=1;B=2                  传给 docker build 的 --build-arg，分号分隔
+name: build-images
+
+on:
+  push:
+    branches: [main]
+    tags: ['*/v*']
+    paths:
+      - 'images/**'
+      - '.gitmodules'
+      - '.github/workflows/build-images.yml'
+  pull_request:
+    paths:
+      - 'images/**'
+      - '.gitmodules'
+      - '.github/workflows/build-images.yml'
+  workflow_dispatch:
+    inputs:
+      image:
+        description: '要构建的镜像名（images/ 下的目录名），留空构建全部'
+        required: false
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  DEFAULT_PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.find.outputs.images }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: find
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_IMAGE: ${{ inputs.image }}
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          all=$(find images -mindepth 2 -maxdepth 2 -name Dockerfile -printf '%h\n' | xargs -rn1 basename | sort)
+
+          if [[ "$EVENT" == workflow_dispatch ]]; then
+            if [[ -n "$INPUT_IMAGE" ]]; then
+              [[ -f "images/$INPUT_IMAGE/Dockerfile" ]] || { echo "::error::images/$INPUT_IMAGE/Dockerfile 不存在"; exit 1; }
+              list="$INPUT_IMAGE"
+            else
+              list="$all"
+            fi
+          elif [[ "$REF_TYPE" == tag ]]; then
+            list="${REF_NAME%%/*}"
+            [[ -f "images/$list/Dockerfile" ]] || { echo "::error::tag $REF_NAME 对应的 images/$list/Dockerfile 不存在"; exit 1; }
+          else
+            base="$PR_BASE"
+            [[ "$EVENT" == push ]] && base="$BEFORE"
+            if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+              list="$all"   # 新分支 / force-push 找不到基准，全量构建
+            else
+              changed=$(git diff --name-only "$base" HEAD)
+              if grep -qxE '\.github/workflows/build-images\.yml|\.gitmodules' <<<"$changed"; then
+                list="$all"
+              else
+                list=$(grep -oP '^images/\K[^/]+' <<<"$changed" | sort -u \
+                       | while read -r d; do [[ -f "images/$d/Dockerfile" ]] && echo "$d"; done || true)
+              fi
+            fi
+          fi
+
+          json=$(printf '%s\n' "$list" | jq -Rsc 'split("\n") | map(select(length > 0))')
+          echo "images=$json" >> "$GITHUB_OUTPUT"
+          echo "将构建: $json"
+
+  build:
+    needs: detect
+    if: needs.detect.outputs.images != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.detect.outputs.images) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - id: cfg
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.image }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          PLATFORMS="$DEFAULT_PLATFORMS"
+          BUILD_ARGS=""
+          if [[ -f "images/$IMAGE/build.env" ]]; then
+            set -a
+            # shellcheck disable=SC1090
+            source "images/$IMAGE/build.env"
+            set +a
+          fi
+          {
+            echo "platforms=$PLATFORMS"
+            echo "name=$REGISTRY/${OWNER,,}/$IMAGE"
+            echo "build_args<<EOF"
+            tr ';' '\n' <<<"$BUILD_ARGS" | sed '/^$/d'
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.cfg.outputs.name }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=sha,format=short
+            type=ref,event=pr
+            type=match,pattern=^[^/]+/v(.+)$,group=1
+          labels: |
+            org.opencontainers.image.title=${{ matrix.image }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: images/${{ matrix.image }}
+          platforms: ${{ steps.cfg.outputs.platforms }}
+          build-args: ${{ steps.cfg.outputs.build_args }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
