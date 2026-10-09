@@ -55,4 +55,3 @@ scripts/new-image.sh my-image git@github.com:foo/bar.git main   # 带 submodule 
 |------|------|
 | `dnake-ci-armhf` | dnake 项目 Drone pipeline 交叉编译用：armhf/armel 工具链 + patchelf 预装好 |
 | `scanservjs-hplip` | cups-web 的 scanservjs：基于 `sbs20/scanservjs`，预装 `hplip sane-utils`，替代 postStart 里的 apt-get |
-| `esphome-gh-builder` | ESPHome 远程构建服务器：实现 Device Builder 的 build-server 协议，把编译转发到 GitHub Actions；以 sidecar 跑在 k8s 的 esphome Deployment 里 |
