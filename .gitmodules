@@ -1,0 +1,4 @@
+[submodule "images/esphome-gh-builder/src"]
+	path = images/esphome-gh-builder/src
+	url = https://github.com/tonyupup/esphome-gh-builder.git
+	branch = main
