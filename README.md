@@ -55,3 +55,4 @@ scripts/new-image.sh my-image git@github.com:foo/bar.git main   # 带 submodule 
 |------|------|
 | `dnake-ci-armhf` | dnake 项目 Drone pipeline 交叉编译用：armhf/armel 工具链 + patchelf 预装好 |
 | `scanservjs-hplip` | cups-web 的 scanservjs：基于 `sbs20/scanservjs`，预装 `hplip sane-utils`，替代 postStart 里的 apt-get |
+| `haproxy-ech` | HAProxy 3.4 + OpenSSL 4.0，`USE_ECH=1`（官方镜像用 OpenSSL 3.5，无 ECH）；`bind ... ech <dir>`，实验性 shared-mode |
