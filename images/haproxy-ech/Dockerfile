@@ -51,6 +51,8 @@ RUN set -eux; \
     chown haproxy:haproxy /var/lib/haproxy
 
 COPY --from=build /opt/openssl/lib /opt/openssl/lib
+# openssl 命令行用来生成 ECH 密钥: openssl ech -public_name <公共名> -out <dir>/<名>.ech
+COPY --from=build /opt/openssl/bin/openssl /usr/local/bin/openssl
 COPY --from=build /usr/local/sbin/haproxy /usr/local/sbin/haproxy
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
