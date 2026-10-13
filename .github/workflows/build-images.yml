@@ -8,6 +8,7 @@
 # 每个镜像目录可放一个可选的 build.env（KEY=VALUE），目前支持：
 #   PLATFORMS=linux/amd64,linux/arm64   覆盖默认平台
 #   BUILD_ARGS=A=1;B=2                  传给 docker build 的 --build-arg，分号分隔
+#   RUNNER=ubuntu-24.04-arm             指定 runner（仅 public 仓库有免费 arm 原生 runner，免 qemu）
 name: build-images
 
 on:
@@ -43,6 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       images: ${{ steps.find.outputs.images }}
+      matrix: ${{ steps.find.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,19 +91,26 @@ jobs:
 
           json=$(printf '%s\n' "$list" | jq -Rsc 'split("\n") | map(select(length > 0))')
           echo "images=$json" >> "$GITHUB_OUTPUT"
+
+          # 每个镜像读取 build.env 里的 RUNNER，默认 ubuntu-latest
+          matrix=$(for i in $list; do
+            r=$(set +u; RUNNER=; [[ -f "images/$i/build.env" ]] && source "images/$i/build.env"; echo "${RUNNER:-ubuntu-latest}")
+            jq -nc --arg image "$i" --arg runner "$r" '{image:$image, runner:$runner}'
+          done | jq -sc '.')
+          echo "matrix=${matrix:-[]}" >> "$GITHUB_OUTPUT"
           echo "将构建: $json"
 
   build:
     needs: detect
     if: needs.detect.outputs.images != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
     strategy:
       fail-fast: false
       matrix:
-        image: ${{ fromJSON(needs.detect.outputs.images) }}
+        include: ${{ fromJSON(needs.detect.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -130,7 +139,8 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-qemu-action@v3
+      - if: matrix.runner == 'ubuntu-latest'
+        uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
